@@ -19,6 +19,8 @@
 
 package org.apache.pulsar.io.doris;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.http.HttpHeaders;
@@ -34,17 +36,33 @@ import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.core.KeyValue;
 import org.apache.pulsar.io.core.Sink;
 import org.apache.pulsar.io.core.SinkContext;
+import org.apache.pulsar.io.core.annotations.Connector;
+import org.apache.pulsar.io.core.annotations.IOType;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+/**
+ * The base abstract class for ElasticSearch sinks.
+ * Users need to implement extractKeyValue function to use this sink.
+ * This class assumes that the input will be JSON documents
+ */
+@Connector(
+        name = "doris",
+        type = IOType.SINK,
+        help = "A sink connector that sends pulsar messages to doris",
+        configClass = DorisSinkConfig.class
+)
 @Slf4j
-public abstract class DorisAbstractSink<K, V> implements Sink<byte[]> {
+public class DorisSink implements Sink<byte[]> {
 
     private String loadUrl = "";
     private Properties properties = new Properties();
     private DorisSinkConfig dorisSinkConfig;
+    private CloseableHttpClient client;
+    private CloseableHttpResponse response;
 
     /**
      * Open connector with configuration
@@ -74,11 +92,21 @@ public abstract class DorisAbstractSink<K, V> implements Sink<byte[]> {
         Objects.requireNonNull(doris_http_port, "Doris HTTP Port is not set");
         // 是否应该mysql jdbc连接一下看能不能联通Doris
         // 不知道运行时候报错能否显示详细exception，在此处完善校验处理
-
-        // sendData(, dorisSinkConfig);
     }
 
-    private void sendData(String content, DorisSinkConfig dorisSinkConfig) throws Exception {
+    /**
+     * Write a message to Sink
+     *
+     * @param record record to write to sink
+     * @throws Exception
+     */
+    @Override
+    public void write(Record<byte[]> record) throws Exception {
+        KeyValue<String, byte[]> keyValue = extractKeyValue(record);
+        sendData(keyValue.getValue().toString(), dorisSinkConfig);
+    }
+
+    private void sendData(String content, DorisSinkConfig dorisSinkConfig) throws IOException {
         final String loadUrl = String.format("http://%s:%s/api/%s/%s/_stream_load",
                 dorisSinkConfig.getDoris_host(),
                 dorisSinkConfig.getDoris_http_port(),
@@ -94,34 +122,57 @@ public abstract class DorisAbstractSink<K, V> implements Sink<byte[]> {
                     }
                 });
 
-        try (CloseableHttpClient client = httpClientBuilder.build()) {
-            HttpPut put = new HttpPut(loadUrl);
-            StringEntity entity = new StringEntity(content, "UTF-8");
-            put.setHeader(HttpHeaders.EXPECT, "100-continue");
-            put.setHeader(HttpHeaders.CONTENT_TYPE, "text/plain; charset=UTF-8");
-            put.setHeader(HttpHeaders.AUTHORIZATION, basicAuthHeader(dorisSinkConfig.getDoris_user(),
-                    dorisSinkConfig.getDoris_password()));
-            // the label header is optional, not necessary
-            // use label header can ensure at most once semantics
-            String label = generateLabel();
-            put.setHeader("label", label);
-            put.setEntity(entity);
+        client = httpClientBuilder.build();
 
-            try (CloseableHttpResponse response = client.execute(put)) {
-                String loadResult = "";
-                if (response.getEntity() != null) {
-                    loadResult = EntityUtils.toString(response.getEntity());
-                }
-                final int statusCode = response.getStatusLine().getStatusCode();
-                // statusCode 200 just indicates that doris be service is ok, not stream load
-                // you should see the output content to find whether stream load is success
-                if (statusCode != 200) {
-                    throw new IOException(
-                            String.format("Stream load failed, statusCode=%s load result=%s", statusCode, loadResult));
-                }
-                System.out.println(loadResult);
-            }
+        HttpPut put = new HttpPut(loadUrl);
+        StringEntity entity = new StringEntity(content, "UTF-8");
+        put.setHeader(HttpHeaders.EXPECT, "100-continue");
+        put.setHeader(HttpHeaders.CONTENT_TYPE, "text/plain; charset=UTF-8");
+        put.setHeader(HttpHeaders.AUTHORIZATION, basicAuthHeader(dorisSinkConfig.getDoris_user(),
+                dorisSinkConfig.getDoris_password()));
+        // the label header is optional, not necessary
+        // use label header can ensure at most once semantics
+        String label = generateLabel();
+        put.setHeader("label", label);
+        put.setEntity(entity);
+
+        response = client.execute(put);
+        String loadResult = "";
+        if (response.getEntity() != null) {
+            loadResult = EntityUtils.toString(response.getEntity());
         }
+        final int statusCode = response.getStatusLine().getStatusCode();
+        // statusCode 200 just indicates that doris be service is ok, not stream load
+        // you should see the output content to find whether stream load is success
+        if (statusCode != 200) {
+            throw new IOException(
+                    String.format("Stream load failed, statusCode=%s load result=%s", statusCode, loadResult));
+        }
+        log.info("@@@@@@@当前请求返回：" + loadResult);
+
+        // 解析json
+        Map dorisLoadResult = parseJsonToPOJO(loadResult);
+        for (Object o : dorisLoadResult.keySet()) {
+            log.info("##############key为" + o.toString());
+            log.info("##############value为" + dorisLoadResult.get(o));
+        }
+    }
+
+    public KeyValue<String, byte[]> extractKeyValue(Record<byte[]> record) {
+        String key = record.getKey().orElse("");
+        return new KeyValue<>(key, record.getValue());
+    }
+
+    /**
+     * 构建请求头
+     *
+     * @param loadResult
+     * @return
+     */
+    public Map parseJsonToPOJO(String loadResult) throws JsonProcessingException {
+        ObjectMapper mapper = new ObjectMapper();
+        Map dorisLoadResult = mapper.readValue(loadResult, Map.class);
+        return dorisLoadResult;
     }
 
     /**
@@ -129,7 +180,7 @@ public abstract class DorisAbstractSink<K, V> implements Sink<byte[]> {
      *
      * @return
      */
-    private String generateLabel() {
+    public static String generateLabel() {
         Calendar calendar = Calendar.getInstance();
         String label = String.format("pulsar_io_%s%02d%02d_%02d%02d%02d_%s",
                 calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1, calendar.get(Calendar.DAY_OF_MONTH),
@@ -145,28 +196,13 @@ public abstract class DorisAbstractSink<K, V> implements Sink<byte[]> {
      * @param password
      * @return
      */
-    private String basicAuthHeader(String username, String password) {
+    public static String basicAuthHeader(String username, String password) {
         final String tobeEncode = username + ":" + password;
         byte[] encoded = Base64.encodeBase64(tobeEncode.getBytes(StandardCharsets.UTF_8));
         return "Basic " + new String(encoded);
     }
 
-    /**
-     * Write a message to Sink
-     *
-     * @param record record to write to sink
-     * @throws Exception
-     */
-    @Override
-    public void write(Record<byte[]> record) throws Exception {
-        KeyValue<K, V> keyValue = extractKeyValue(record);
-
-    }
-
     @Override
     public void close() throws Exception {
-
     }
-
-    public abstract KeyValue<K, V> extractKeyValue(Record<byte[]> message);
 }
