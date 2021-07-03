@@ -103,10 +103,23 @@ public class DorisSink implements Sink<byte[]> {
     @Override
     public void write(Record<byte[]> record) throws Exception {
         KeyValue<String, byte[]> keyValue = extractKeyValue(record);
-        sendData(keyValue.getValue().toString(), dorisSinkConfig);
+        String content = new String(keyValue.getValue(), StandardCharsets.UTF_8);
+        log.info("%%%%%%%%%%插入数据：  " + content);
+        Map dorisLoadResult = sendData(content, dorisSinkConfig);
+
+        for (Object o : dorisLoadResult.keySet()) {
+            log.info("##############key为" + o.toString());
+            log.info("##############value为" + dorisLoadResult.get(o));
+        }
+
+        if ("Success".equals(dorisLoadResult.get("Status")) && "OK".equals(dorisLoadResult.get("Message"))) {
+            record.ack();
+        } else {
+            record.fail();
+        }
     }
 
-    private void sendData(String content, DorisSinkConfig dorisSinkConfig) throws IOException {
+    private Map sendData(String content, DorisSinkConfig dorisSinkConfig) throws IOException {
         final String loadUrl = String.format("http://%s:%s/api/%s/%s/_stream_load",
                 dorisSinkConfig.getDoris_host(),
                 dorisSinkConfig.getDoris_http_port(),
@@ -152,10 +165,7 @@ public class DorisSink implements Sink<byte[]> {
 
         // 解析json
         Map dorisLoadResult = parseJsonToPOJO(loadResult);
-        for (Object o : dorisLoadResult.keySet()) {
-            log.info("##############key为" + o.toString());
-            log.info("##############value为" + dorisLoadResult.get(o));
-        }
+        return dorisLoadResult;
     }
 
     public KeyValue<String, byte[]> extractKeyValue(Record<byte[]> record) {
@@ -204,5 +214,8 @@ public class DorisSink implements Sink<byte[]> {
 
     @Override
     public void close() throws Exception {
+        if (client != null) {
+            client.close();
+        }
     }
 }
