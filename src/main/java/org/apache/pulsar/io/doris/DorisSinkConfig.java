@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -35,7 +35,8 @@ import java.util.Map;
  * @version 1.0.0
  * @ClassName DorisSinkConfig.java
  * @Description doris config
- * curl --location-trusted -u root -H "label:123" -H "where: k1=20180601" -T testData http://host:port/api/testDb/testTbl/_stream_load
+ * curl --location-trusted -u root -H "label:123" -H "where: k1=20180601" -T testData
+ * http://host:port/api/testDb/testTbl/_stream_load
  * @createTime 2021年07月02日 19:04:00
  */
 @Data

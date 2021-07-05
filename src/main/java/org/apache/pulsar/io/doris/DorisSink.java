@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * <p>
- * http://www.apache.org/licenses/LICENSE-2.0
- * <p>
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -20,6 +20,7 @@
 package org.apache.pulsar.io.doris;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Base64;
@@ -32,13 +33,16 @@ import org.apache.http.impl.client.DefaultRedirectStrategy;
 import org.apache.http.impl.client.HttpClientBuilder;
 import org.apache.http.impl.client.HttpClients;
 import org.apache.http.util.EntityUtils;
+import org.apache.pulsar.client.api.schema.Field;
+import org.apache.pulsar.client.api.schema.GenericRecord;
+import org.apache.pulsar.client.impl.schema.generic.GenericJsonRecord;
+import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.core.KeyValue;
 import org.apache.pulsar.io.core.Sink;
 import org.apache.pulsar.io.core.SinkContext;
 import org.apache.pulsar.io.core.annotations.Connector;
 import org.apache.pulsar.io.core.annotations.IOType;
-import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -56,7 +60,7 @@ import java.util.*;
         configClass = DorisSinkConfig.class
 )
 @Slf4j
-public class DorisSink implements Sink<byte[]> {
+public class DorisSink implements Sink<GenericJsonRecord> {
 
     private String loadUrl = "";
     private Properties properties = new Properties();
@@ -97,15 +101,31 @@ public class DorisSink implements Sink<byte[]> {
     /**
      * Write a message to Sink
      *
-     * @param record record to write to sink
+     * @param message message to write to sink
      * @throws Exception
      */
     @Override
-    public void write(Record<byte[]> record) throws Exception {
-        KeyValue<String, byte[]> keyValue = extractKeyValue(record);
-        String content = new String(keyValue.getValue(), StandardCharsets.UTF_8);
+    public void write(Record<GenericJsonRecord> message) throws Exception {
+        /*KeyValue<String, GenericRecord> keyValue = extractKeyValue(record);
+        String content = new String(keyValue.getValue(), StandardCharsets.UTF_8);*/
+
+        // generatejson
+
+        GenericJsonRecord record = message.getValue();
+        JsonNode jsonNode = record.getJsonNode();
+        ObjectMapper mapper = new ObjectMapper();
+        String content = mapper.writeValueAsString(jsonNode);
+
+        /*List<Field> fields = record.getFields();
+        StringBuilder stringBuilder = new StringBuilder();
+        for (Field field : fields) {
+            Object fieldValue = record.getField(field);
+            stringBuilder.append(fieldValue);
+        }
+        String content = stringBuilder.toString();*/
+
         log.info("%%%%%%%%%%插入数据：  " + content);
-        Map dorisLoadResult = sendData(content, dorisSinkConfig);
+        Map dorisLoadResult = sendData(content, dorisSinkConfig, message);
 
         for (Object o : dorisLoadResult.keySet()) {
             log.info("##############key为" + o.toString());
@@ -113,13 +133,13 @@ public class DorisSink implements Sink<byte[]> {
         }
 
         if ("Success".equals(dorisLoadResult.get("Status")) && "OK".equals(dorisLoadResult.get("Message"))) {
-            record.ack();
+            message.ack();
         } else {
-            record.fail();
+            message.fail();
         }
     }
 
-    private Map sendData(String content, DorisSinkConfig dorisSinkConfig) throws IOException {
+    private Map sendData(String content, DorisSinkConfig dorisSinkConfig, Record<GenericJsonRecord> message) throws IOException {
         final String loadUrl = String.format("http://%s:%s/api/%s/%s/_stream_load",
                 dorisSinkConfig.getDoris_host(),
                 dorisSinkConfig.getDoris_http_port(),
@@ -139,8 +159,9 @@ public class DorisSink implements Sink<byte[]> {
 
         HttpPut put = new HttpPut(loadUrl);
         StringEntity entity = new StringEntity(content, "UTF-8");
+        entity.setContentEncoding("UTF-8");
         put.setHeader(HttpHeaders.EXPECT, "100-continue");
-        put.setHeader(HttpHeaders.CONTENT_TYPE, "text/plain; charset=UTF-8");
+        put.setHeader(HttpHeaders.CONTENT_TYPE, "application/json;charset=UTF-8");
         put.setHeader(HttpHeaders.AUTHORIZATION, basicAuthHeader(dorisSinkConfig.getDoris_user(),
                 dorisSinkConfig.getDoris_password()));
         // the label header is optional, not necessary
@@ -158,6 +179,7 @@ public class DorisSink implements Sink<byte[]> {
         // statusCode 200 just indicates that doris be service is ok, not stream load
         // you should see the output content to find whether stream load is success
         if (statusCode != 200) {
+            message.fail();
             throw new IOException(
                     String.format("Stream load failed, statusCode=%s load result=%s", statusCode, loadResult));
         }
@@ -168,7 +190,7 @@ public class DorisSink implements Sink<byte[]> {
         return dorisLoadResult;
     }
 
-    public KeyValue<String, byte[]> extractKeyValue(Record<byte[]> record) {
+    public KeyValue<String, GenericRecord> extractKeyValue(Record<GenericRecord> record) {
         String key = record.getKey().orElse("");
         return new KeyValue<>(key, record.getValue());
     }
