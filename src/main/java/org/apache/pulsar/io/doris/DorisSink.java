@@ -24,35 +24,35 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Base64;
+import org.apache.http.HttpEntityEnclosingRequest;
 import org.apache.http.HttpHeaders;
+import org.apache.http.HttpRequest;
+import org.apache.http.NoHttpResponseException;
+import org.apache.http.client.HttpRequestRetryHandler;
+import org.apache.http.client.ServiceUnavailableRetryStrategy;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPut;
+import org.apache.http.client.protocol.HttpClientContext;
+import org.apache.http.conn.ConnectTimeoutException;
 import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.DefaultRedirectStrategy;
-import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.http.impl.client.HttpClients;
+import org.apache.http.impl.client.*;
+import org.apache.http.protocol.HttpContext;
 import org.apache.http.util.EntityUtils;
-import org.apache.pulsar.client.api.schema.Field;
-import org.apache.pulsar.client.api.schema.GenericRecord;
 import org.apache.pulsar.client.impl.schema.generic.GenericJsonRecord;
-import org.apache.pulsar.common.schema.SchemaType;
 import org.apache.pulsar.functions.api.Record;
-import org.apache.pulsar.io.core.KeyValue;
 import org.apache.pulsar.io.core.Sink;
 import org.apache.pulsar.io.core.SinkContext;
 import org.apache.pulsar.io.core.annotations.Connector;
 import org.apache.pulsar.io.core.annotations.IOType;
 
+import javax.net.ssl.SSLException;
 import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 
-/**
- * The base abstract class for ElasticSearch sinks.
- * Users need to implement extractKeyValue function to use this sink.
- * This class assumes that the input will be JSON documents
- */
 @Connector(
         name = "doris",
         type = IOType.SINK,
@@ -63,10 +63,10 @@ import java.util.*;
 public class DorisSink implements Sink<GenericJsonRecord> {
 
     private String loadUrl = "";
-    private Properties properties = new Properties();
     private DorisSinkConfig dorisSinkConfig;
     private CloseableHttpClient client;
-    private CloseableHttpResponse response;
+    private HttpClientBuilder httpClientBuilder;
+    private HttpPut httpPut;
 
     /**
      * Open connector with configuration
@@ -96,6 +96,40 @@ public class DorisSink implements Sink<GenericJsonRecord> {
         Objects.requireNonNull(doris_http_port, "Doris HTTP Port is not set");
         // 是否应该mysql jdbc连接一下看能不能联通Doris
         // 不知道运行时候报错能否显示详细exception，在此处完善校验处理
+
+        loadUrl = String.format("http://%s:%s/api/%s/%s/_stream_load",
+                dorisSinkConfig.getDoris_host(),
+                dorisSinkConfig.getDoris_http_port(),
+                dorisSinkConfig.getDoris_db(),
+                dorisSinkConfig.getDoris_table());
+
+        DefaultServiceUnavailableRetryStrategy defaultServiceUnavailableRetryStrategy = new
+                DefaultServiceUnavailableRetryStrategy();
+        ServiceUnavailableRetryStrategy serviceUnavailableRetryStrategy = new MyServiceUnavailableRetryStrategy
+                .Builder()
+                .executionCount(3)
+                .retryInterval(1000)
+                .build();
+
+        httpClientBuilder = HttpClients
+                .custom()
+                .setRedirectStrategy(new DefaultRedirectStrategy() {
+                    @Override
+                    protected boolean isRedirectable(String method) {
+                        return true;
+                    }
+                })
+                .setServiceUnavailableRetryStrategy(serviceUnavailableRetryStrategy);
+
+        client = httpClientBuilder.build();
+
+        httpPut = new HttpPut(loadUrl);
+        httpPut.setHeader(HttpHeaders.EXPECT, "100-continue");
+        httpPut.setHeader(HttpHeaders.CONTENT_TYPE, "application/json;charset=UTF-8");
+        httpPut.setHeader(HttpHeaders.AUTHORIZATION, basicAuthHeader(dorisSinkConfig.getDoris_user(),
+                dorisSinkConfig.getDoris_password()));
+        httpPut.setHeader("format", "json");
+
     }
 
     /**
@@ -106,108 +140,97 @@ public class DorisSink implements Sink<GenericJsonRecord> {
      */
     @Override
     public void write(Record<GenericJsonRecord> message) throws Exception {
-        /*KeyValue<String, GenericRecord> keyValue = extractKeyValue(record);
-        String content = new String(keyValue.getValue(), StandardCharsets.UTF_8);*/
-
-        // generatejson
         GenericJsonRecord record = message.getValue();
         JsonNode jsonNode = record.getJsonNode();
         ObjectMapper mapper = new ObjectMapper();
         String content = mapper.writeValueAsString(jsonNode);
 
-        /*List<Field> fields = record.getFields();
-        StringBuilder stringBuilder = new StringBuilder();
-        for (Field field : fields) {
-            Object fieldValue = record.getField(field);
-            stringBuilder.append(fieldValue);
-        }
-        String content = stringBuilder.toString();*/
-
         log.info("%%%%%%%%%%插入数据：  " + content);
-        Map dorisLoadResult = sendData(content, dorisSinkConfig, message);
+        sendData(content, dorisSinkConfig, message);
+    }
 
-        if ("Success".equals(dorisLoadResult.get("Status")) && "OK".equals(dorisLoadResult.get("Message"))) {
+    private void sendData(String content, DorisSinkConfig dorisSinkConfig,
+                          Record<GenericJsonRecord> message) throws IOException {
+        StringEntity entity = new StringEntity(content, "UTF-8");
+        entity.setContentEncoding("UTF-8");
+
+        String label = generateUniqueDorisLoadDataJobLabel();
+        httpPut.setHeader("label", label);
+        httpPut.setEntity(entity);
+
+        CloseableHttpResponse response = client.execute(httpPut);
+        String loadResult = "";
+        if (response.getEntity() != null) {
+            loadResult = EntityUtils.toString(response.getEntity());
+        }
+
+        log.info("@@@@@@@当前请求返回：" + loadResult);
+
+        Map dorisLoadResultMap = parseDorisLoadResultJsonToPOJO(loadResult);
+        processLoadJobResult(message, response, dorisLoadResultMap);
+    }
+
+    private void processLoadJobResult(Record<GenericJsonRecord> message,
+                                      CloseableHttpResponse response,
+                                      Map dorisLoadResultMap) throws IOException {
+        final int statusCode = response.getStatusLine().getStatusCode();
+        // 200只判定Doris服务正不正常
+        if (statusCode != 200) {
+            message.fail();
+            // TODO: 这里表示指定节点服务不正常。添加参数所有fe的host和http_port(逗号分隔)，换个Fe URL重新提交？
+            // TODO: 幂等：（1）使用之前的label：Status=Label Already Exists && ExistingJobStatus = FINISHED
+            // TODO: （2）重新申请一个label：数据有可能重复？doris表解决，这里不管？
+            throw new IOException(String.format("Stream load failed, statusCode=%s", statusCode));
+        }
+        /*{
+            "TxnId": 35036,
+                "Label": "pulsar_io_20210706_153835_668b99df21984a06a98493b6e96d3002",
+                "Status": "Success",
+                "Message": "OK",
+                "NumberTotalRows": 1,
+                "NumberLoadedRows": 1,
+                "NumberFilteredRows": 0,
+                "NumberUnselectedRows": 0,
+                "LoadBytes": 37,
+                "LoadTimeMs": 29,
+                "BeginTxnTimeMs": 1,
+                "StreamLoadPutTimeMs": 2,
+                "ReadDataTimeMs": 0,
+                "WriteDataTimeMs": 7,
+                "CommitAndPublishTimeMs": 18
+        }*/
+        if ("Success".equals(dorisLoadResultMap.get("Status")) && "OK".equals(dorisLoadResultMap.get("Message"))) {
             message.ack();
         } else {
             message.fail();
         }
     }
 
-    private Map sendData(String content, DorisSinkConfig dorisSinkConfig, Record<GenericJsonRecord> message) throws IOException {
-        final String loadUrl = String.format("http://%s:%s/api/%s/%s/_stream_load",
-                dorisSinkConfig.getDoris_host(),
-                dorisSinkConfig.getDoris_http_port(),
-                dorisSinkConfig.getDoris_db(),
-                dorisSinkConfig.getDoris_table());
-
-        final HttpClientBuilder httpClientBuilder = HttpClients
-                .custom()
-                .setRedirectStrategy(new DefaultRedirectStrategy() {
-                    @Override
-                    protected boolean isRedirectable(String method) {
-                        return true;
-                    }
-                });
-
-        client = httpClientBuilder.build();
-
-        HttpPut put = new HttpPut(loadUrl);
-        StringEntity entity = new StringEntity(content, "UTF-8");
-        entity.setContentEncoding("UTF-8");
-        put.setHeader(HttpHeaders.EXPECT, "100-continue");
-        put.setHeader(HttpHeaders.CONTENT_TYPE, "application/json;charset=UTF-8");
-        put.setHeader(HttpHeaders.AUTHORIZATION, basicAuthHeader(dorisSinkConfig.getDoris_user(),
-                dorisSinkConfig.getDoris_password()));
-        // the label header is optional, not necessary
-        // use label header can ensure at most once semantics
-        String label = generateLabel();
-        put.setHeader("label", label);
-        put.setHeader("format", "json");
-        put.setEntity(entity);
-
-        response = client.execute(put);
-        String loadResult = "";
-        if (response.getEntity() != null) {
-            loadResult = EntityUtils.toString(response.getEntity());
+    public static boolean isHostConnectable(String host, int port) {
+        Socket socket = new Socket();
+        try {
+            socket.connect(new InetSocketAddress(host, port));
+        } catch (IOException e) {
+            log.error("Doris Fe is not available");
+            e.printStackTrace();
+            return false;
+        } finally {
+            try {
+                socket.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
-        final int statusCode = response.getStatusLine().getStatusCode();
-        // statusCode 200 just indicates that doris be service is ok, not stream load
-        // you should see the output content to find whether stream load is success
-        if (statusCode != 200) {
-            message.fail();
-            throw new IOException(
-                    String.format("Stream load failed, statusCode=%s load result=%s", statusCode, loadResult));
-        }
-        log.info("@@@@@@@当前请求返回：" + loadResult);
-
-        // 解析json
-        Map dorisLoadResult = parseJsonToPOJO(loadResult);
-        return dorisLoadResult;
+        return true;
     }
 
-    public KeyValue<String, GenericRecord> extractKeyValue(Record<GenericRecord> record) {
-        String key = record.getKey().orElse("");
-        return new KeyValue<>(key, record.getValue());
-    }
-
-    /**
-     * 构建请求头
-     *
-     * @param loadResult
-     * @return
-     */
-    public Map parseJsonToPOJO(String loadResult) throws JsonProcessingException {
+    public Map parseDorisLoadResultJsonToPOJO(String loadResult) throws JsonProcessingException {
         ObjectMapper mapper = new ObjectMapper();
         Map dorisLoadResult = mapper.readValue(loadResult, Map.class);
         return dorisLoadResult;
     }
 
-    /**
-     * 生成doris导入任务的标识label
-     *
-     * @return
-     */
-    public static String generateLabel() {
+    public static String generateUniqueDorisLoadDataJobLabel() {
         Calendar calendar = Calendar.getInstance();
         String label = String.format("pulsar_io_%s%02d%02d_%02d%02d%02d_%s",
                 calendar.get(Calendar.YEAR), calendar.get(Calendar.MONTH) + 1, calendar.get(Calendar.DAY_OF_MONTH),
@@ -216,13 +239,6 @@ public class DorisSink implements Sink<GenericJsonRecord> {
         return label;
     }
 
-    /**
-     * 构建请求头
-     *
-     * @param username
-     * @param password
-     * @return
-     */
     public static String basicAuthHeader(String username, String password) {
         final String tobeEncode = username + ":" + password;
         byte[] encoded = Base64.encodeBase64(tobeEncode.getBytes(StandardCharsets.UTF_8));
