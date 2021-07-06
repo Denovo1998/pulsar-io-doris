@@ -30,15 +30,6 @@ import java.io.IOException;
 import java.io.Serializable;
 import java.util.Map;
 
-/**
- * @author liusinan
- * @version 1.0.0
- * @ClassName DorisSinkConfig.java
- * @Description doris config
- * curl --location-trusted -u root -H "label:123" -H "where: k1=20180601" -T testData
- * http://host:port/api/testDb/testTbl/_stream_load
- * @createTime 2021年07月02日 19:04:00
- */
 @Data
 @Accessors(chain = true)
 public class DorisSinkConfig implements Serializable {
@@ -48,49 +39,39 @@ public class DorisSinkConfig implements Serializable {
     @FieldDoc(
         required = true,
         defaultValue = "xxx.com",
-        help =
-            "A comma-separated list of host and port pairs that are the addresses of "
-          + "the Kafka brokers that a Kafka client connects to initially bootstrap itself")
+        help = "A comma-separated list of hosts, which are the addresses of Doris Fe services")
     private String doris_host;
 
     @FieldDoc(
         required = true,
         defaultValue = "",
-        help =
-            "A comma-separated list of host and port pairs that are the addresses of "
-          + "the Kafka brokers that a Kafka client connects to initially bootstrap itself")
+        help = "The database that this connector connects to")
     private String doris_db;
 
     @FieldDoc(
         required = true,
         defaultValue = "",
-        help =
-            "A comma-separated list of host and port pairs that are the addresses of "
-          + "the Kafka brokers that a Kafka client connects to initially bootstrap itself")
+        help = "The Table connected by this connector")
     private String doris_table;
 
     @FieldDoc(
         required = true,
         defaultValue = "root",
-        help =
-            "A comma-separated list of host and port pairs that are the addresses of "
-          + "the Kafka brokers that a Kafka client connects to initially bootstrap itself")
+        sensitive = true,
+        help = "Username used to connect to Doris")
     private String doris_user;
 
     @FieldDoc(
         required = true,
         defaultValue = "",
-        help =
-            "A comma-separated list of host and port pairs that are the addresses of "
-          + "the Kafka brokers that a Kafka client connects to initially bootstrap itself")
+        sensitive = true,
+        help = "Password used to connect to the Doris")
     private String doris_password;
 
     @FieldDoc(
         required = true,
-        defaultValue = "8410",
-        help =
-            "A comma-separated list of host and port pairs that are the addresses of "
-          + "the Kafka brokers that a Kafka client connects to initially bootstrap itself")
+        defaultValue = "8030",
+        help = "Http server port on Doris FE")
     private String doris_http_port;
 
     public static DorisSinkConfig load(String yamlFile) throws IOException {
