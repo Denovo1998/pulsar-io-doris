@@ -110,7 +110,6 @@ public class DorisSink implements Sink<GenericJsonRecord> {
         String content = new String(keyValue.getValue(), StandardCharsets.UTF_8);*/
 
         // generatejson
-
         GenericJsonRecord record = message.getValue();
         JsonNode jsonNode = record.getJsonNode();
         ObjectMapper mapper = new ObjectMapper();
@@ -126,11 +125,6 @@ public class DorisSink implements Sink<GenericJsonRecord> {
 
         log.info("%%%%%%%%%%插入数据：  " + content);
         Map dorisLoadResult = sendData(content, dorisSinkConfig, message);
-
-        for (Object o : dorisLoadResult.keySet()) {
-            log.info("##############key为" + o.toString());
-            log.info("##############value为" + dorisLoadResult.get(o));
-        }
 
         if ("Success".equals(dorisLoadResult.get("Status")) && "OK".equals(dorisLoadResult.get("Message"))) {
             message.ack();
@@ -168,6 +162,7 @@ public class DorisSink implements Sink<GenericJsonRecord> {
         // use label header can ensure at most once semantics
         String label = generateLabel();
         put.setHeader("label", label);
+        put.setHeader("format", "json");
         put.setEntity(entity);
 
         response = client.execute(put);
@@ -231,7 +226,7 @@ public class DorisSink implements Sink<GenericJsonRecord> {
     public static String basicAuthHeader(String username, String password) {
         final String tobeEncode = username + ":" + password;
         byte[] encoded = Base64.encodeBase64(tobeEncode.getBytes(StandardCharsets.UTF_8));
-        return "Basic " + new String(encoded);
+        return "Basic " + new String(encoded, StandardCharsets.UTF_8);
     }
 
     @Override
