@@ -39,7 +39,8 @@ public class DorisSinkConfig implements Serializable {
     @FieldDoc(
         required = true,
         defaultValue = "xxx.com",
-        help = "A comma-separated list of hosts, which are the addresses of Doris Fe services")
+        help = "A comma-separated list of hosts, which are the addresses of Doris Fe services.It is recommended that " +
+               "Doris Fe service be proxy.")
     private String doris_host;
 
     @FieldDoc(
@@ -73,6 +74,11 @@ public class DorisSinkConfig implements Serializable {
         defaultValue = "8030",
         help = "Http server port on Doris FE")
     private String doris_http_port;
+
+    @FieldDoc(
+        defaultValue = "2",
+        help = "Number of job failure retries")
+    private String job_failure_retries;
 
     public static DorisSinkConfig load(String yamlFile) throws IOException {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
