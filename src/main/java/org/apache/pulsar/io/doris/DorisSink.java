@@ -59,6 +59,7 @@ public class DorisSink implements Sink<GenericJsonRecord> {
     private HttpClientBuilder httpClientBuilder;
     private HttpPut httpPut;
     private int job_failure_retries = 2;
+    private int job_label_repeat_retries = 3;
 
     @Override
     public void open(Map<String, Object> config, SinkContext sinkContext) throws Exception {
@@ -72,6 +73,7 @@ public class DorisSink implements Sink<GenericJsonRecord> {
         String doris_password = dorisSinkConfig.getDoris_password();
         String doris_http_port = dorisSinkConfig.getDoris_http_port();
         job_failure_retries = Integer.parseInt(dorisSinkConfig.getJob_failure_retries());
+        job_label_repeat_retries = Integer.parseInt(dorisSinkConfig.getJob_label_repeat_retries());
         // 是否应该ping一下这个ip？
         Objects.requireNonNull(doris_host, "Doris Host is not set");
         Objects.requireNonNull(doris_db, "Doris Database is not set");
@@ -126,12 +128,14 @@ public class DorisSink implements Sink<GenericJsonRecord> {
 
         log.info("%%%%%%%%%%插入数据：  " + content);
         int failJobRetryCount = 0;
-        sendData(content, message, failJobRetryCount);
+        int jobLabelRepeatRetryCount = 0;
+        sendData(content, message, failJobRetryCount, jobLabelRepeatRetryCount);
     }
 
     private void sendData(String content,
                           Record<GenericJsonRecord> message,
-                          int failJobRetryCount) throws IOException {
+                          int failJobRetryCount,
+                          int jobLabelRepeatRetryCount) throws IOException {
         StringEntity entity = new StringEntity(content, "UTF-8");
         entity.setContentEncoding("UTF-8");
 
@@ -147,15 +151,15 @@ public class DorisSink implements Sink<GenericJsonRecord> {
 
         log.info("@@@@@@@当前请求返回：" + loadResult);
 
-        Map dorisLoadResultMap = parseDorisLoadResultJsonToPOJO(loadResult);
-        processLoadJobResult(content, message, response, dorisLoadResultMap, failJobRetryCount);
-        failJobRetryCount += 1;
+        Map dorisLoadResultMap = parseDorisLoadResultJsonToMap(loadResult);
+        processLoadJobResult(content, message, response, dorisLoadResultMap, failJobRetryCount, jobLabelRepeatRetryCount);
     }
 
     private void processLoadJobResult(String content, Record<GenericJsonRecord> message,
                                       CloseableHttpResponse response,
                                       Map dorisLoadResultMap,
-                                      int failJobRetryCount) throws IOException {
+                                      int failJobRetryCount,
+                                      int jobLabelRepeatRetryCount) throws IOException {
         final int statusCode = response.getStatusLine().getStatusCode();
         if (statusCode != 200) {
             message.fail();
@@ -170,11 +174,20 @@ public class DorisSink implements Sink<GenericJsonRecord> {
         } else if ("Label Already Exists".equals(jobStatus)) {
             String existingJobStatus = dorisLoadResultMap.get("ExistingJobStatus").toString();
             log.error("Doris label already exists! The existing job jobStatus is ： " + existingJobStatus);
-            sendData(content, message, failJobRetryCount);
-        } else if ("Fail".equals(jobStatus) && failJobRetryCount <= job_failure_retries) {
-            message.fail();
+            if (jobLabelRepeatRetryCount < job_label_repeat_retries) {
+                sendData(content, message, failJobRetryCount, jobLabelRepeatRetryCount + 1);
+            } else {
+                message.fail();
+                log.error("Maximum number of retries exceeded(Job label repeat)");
+            }
+        } else if ("Fail".equals(jobStatus)) {
             log.error("Job is fail,please retry!");
-            sendData(content, message, failJobRetryCount);
+            if (failJobRetryCount < job_failure_retries) {
+                sendData(content, message, failJobRetryCount + 1, jobLabelRepeatRetryCount);
+            } else {
+                message.fail();
+                log.error("Maximum number of retries exceeded(Job fail)");
+            }
         } else {
             message.fail();
             log.error("Unknown error!");
@@ -199,7 +212,7 @@ public class DorisSink implements Sink<GenericJsonRecord> {
         return true;
     }
 
-    private Map parseDorisLoadResultJsonToPOJO(String loadResult) throws JsonProcessingException {
+    private Map parseDorisLoadResultJsonToMap(String loadResult) throws JsonProcessingException {
         ObjectMapper mapper = new ObjectMapper();
         Map dorisLoadResult = mapper.readValue(loadResult, Map.class);
         return dorisLoadResult;

@@ -80,6 +80,11 @@ public class DorisSinkConfig implements Serializable {
         help = "Number of job failure retries")
     private String job_failure_retries;
 
+    @FieldDoc(
+            defaultValue = "3",
+            help = "Because the job label is repeated, the maximum number of repeated submissions is limited")
+    private String job_label_repeat_retries;
+
     public static DorisSinkConfig load(String yamlFile) throws IOException {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
         return mapper.readValue(new File(yamlFile), DorisSinkConfig.class);
