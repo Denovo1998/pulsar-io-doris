@@ -39,8 +39,8 @@ public class DorisSinkConfig implements Serializable {
     @FieldDoc(
         required = true,
         defaultValue = "xxx.com",
-        help = "A comma-separated list of hosts, which are the addresses of Doris Fe services.It is recommended that " +
-               "Doris Fe service be proxy.")
+        help = "A comma-separated list of hosts, which are the addresses of Doris Fe services." +
+               "It is recommended that Doris Fe service be proxy.")
     private String doris_host;
 
     @FieldDoc(
