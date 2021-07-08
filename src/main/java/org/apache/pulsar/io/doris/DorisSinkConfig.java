@@ -81,9 +81,23 @@ public class DorisSinkConfig implements Serializable {
     private String job_failure_retries = "2";
 
     @FieldDoc(
-            defaultValue = "3",
-            help = "Because the job label is repeated, the maximum number of repeated submissions is limited")
+        defaultValue = "3",
+        help = "Because the job label is repeated, the maximum number of repeated submissions is limited")
     private String job_label_repeat_retries = "3";
+
+    @FieldDoc(
+        required = true,
+        defaultValue = "500",
+        help = "Insert into Doris timeout in milliseconds"
+    )
+    private int timeout = 500;
+
+    @FieldDoc(
+        required = true,
+        defaultValue = "200",
+        help = "The batch size of updates made to the Doris"
+    )
+    private int batchSize = 100;
 
     public static DorisSinkConfig load(String yamlFile) throws IOException {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());

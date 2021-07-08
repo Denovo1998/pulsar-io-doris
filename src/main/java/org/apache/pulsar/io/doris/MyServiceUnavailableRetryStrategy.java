@@ -23,10 +23,6 @@ import org.apache.http.HttpResponse;
 import org.apache.http.client.ServiceUnavailableRetryStrategy;
 import org.apache.http.protocol.HttpContext;
 
-/**
- * 针对请求地址可达，非200 响应码进行重试
- */
-
 public class MyServiceUnavailableRetryStrategy implements ServiceUnavailableRetryStrategy {
 
     private int executionCount;
@@ -37,9 +33,6 @@ public class MyServiceUnavailableRetryStrategy implements ServiceUnavailableRetr
         this.retryInterval = builder.retryInterval;
     }
 
-    /**
-     * retry逻辑
-     */
     @Override
     public boolean retryRequest(HttpResponse response,
                                 int executionCount,
@@ -50,9 +43,6 @@ public class MyServiceUnavailableRetryStrategy implements ServiceUnavailableRetr
             return false;
     }
 
-    /**
-     * retry间隔时间
-     */
     @Override
     public long getRetryInterval() {
         return this.retryInterval;
@@ -81,5 +71,4 @@ public class MyServiceUnavailableRetryStrategy implements ServiceUnavailableRetr
             return new MyServiceUnavailableRetryStrategy(this);
         }
     }
-
 }

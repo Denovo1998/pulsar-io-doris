@@ -19,5 +19,5 @@
 
 name: doris
 description: Writes data into Doris
-sinkClass: org.apache.pulsar.io.doris.DorisSink
+sinkClass: org.apache.pulsar.io.doris.DorisGenericJsonRecordSink
 sinkConfigClass: org.apache.pulsar.io.doris.DorisSinkConfig
