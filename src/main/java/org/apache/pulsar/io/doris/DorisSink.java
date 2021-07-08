@@ -135,7 +135,7 @@ public class DorisSink implements Sink<GenericJsonRecord> {
     private void sendData(String content,
                           Record<GenericJsonRecord> message,
                           int failJobRetryCount,
-                          int jobLabelRepeatRetryCount) throws IOException {
+                          int jobLabelRepeatRetryCount) throws Exception {
         StringEntity entity = new StringEntity(content, "UTF-8");
         entity.setContentEncoding("UTF-8");
 
@@ -159,7 +159,7 @@ public class DorisSink implements Sink<GenericJsonRecord> {
                                       CloseableHttpResponse response,
                                       Map dorisLoadResultMap,
                                       int failJobRetryCount,
-                                      int jobLabelRepeatRetryCount) throws IOException {
+                                      int jobLabelRepeatRetryCount) throws Exception {
         final int statusCode = response.getStatusLine().getStatusCode();
         if (statusCode != 200) {
             message.fail();
@@ -172,21 +172,22 @@ public class DorisSink implements Sink<GenericJsonRecord> {
             message.ack();
             log.info("Job is success!");
         } else if ("Label Already Exists".equals(jobStatus)) {
-            String existingJobStatus = dorisLoadResultMap.get("ExistingJobStatus").toString();
-            log.error("Doris label already exists! The existing job jobStatus is ： " + existingJobStatus);
             if (jobLabelRepeatRetryCount < job_label_repeat_retries) {
+                String existingJobStatus = dorisLoadResultMap.get("ExistingJobStatus").toString();
+                log.error("Doris label already exists! The existing job jobStatus is ： " + existingJobStatus);
                 sendData(content, message, failJobRetryCount, jobLabelRepeatRetryCount + 1);
             } else {
                 message.fail();
-                log.error("Maximum number of retries exceeded(Job label repeat)");
+                log.error("Maximum number of retries exceeded(Job label repeat), message: " + content);
             }
         } else if ("Fail".equals(jobStatus)) {
-            log.error("Job is fail,please retry!");
             if (failJobRetryCount < job_failure_retries) {
+                log.error("Job is fail,please retry! Error message: " + dorisLoadResultMap.get("Message").toString());
                 sendData(content, message, failJobRetryCount + 1, jobLabelRepeatRetryCount);
             } else {
                 message.fail();
-                log.error("Maximum number of retries exceeded(Job fail)");
+                log.error("Maximum number of retries exceeded(Job fail), message: " + content);
+                throw new Exception(String.format("Maximum number of retries exceeded(Job fail)!"));
             }
         } else {
             message.fail();

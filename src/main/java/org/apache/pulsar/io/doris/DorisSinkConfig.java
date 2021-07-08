@@ -41,7 +41,7 @@ public class DorisSinkConfig implements Serializable {
         defaultValue = "xxx.com",
         help = "A comma-separated list of hosts, which are the addresses of Doris Fe services." +
                "It is recommended that Doris Fe service be proxy.")
-    private String doris_host;
+    private String doris_host = "xxx.com";
 
     @FieldDoc(
         required = true,
@@ -60,7 +60,7 @@ public class DorisSinkConfig implements Serializable {
         defaultValue = "root",
         sensitive = true,
         help = "Username used to connect to Doris")
-    private String doris_user;
+    private String doris_user = "root";
 
     @FieldDoc(
         required = true,
@@ -73,17 +73,17 @@ public class DorisSinkConfig implements Serializable {
         required = true,
         defaultValue = "8030",
         help = "Http server port on Doris FE")
-    private String doris_http_port;
+    private String doris_http_port = "8030";
 
     @FieldDoc(
         defaultValue = "2",
         help = "Number of job failure retries")
-    private String job_failure_retries;
+    private String job_failure_retries = "2";
 
     @FieldDoc(
             defaultValue = "3",
             help = "Because the job label is repeated, the maximum number of repeated submissions is limited")
-    private String job_label_repeat_retries;
+    private String job_label_repeat_retries = "3";
 
     public static DorisSinkConfig load(String yamlFile) throws IOException {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
@@ -94,5 +94,4 @@ public class DorisSinkConfig implements Serializable {
         ObjectMapper mapper = new ObjectMapper();
         return mapper.readValue(new ObjectMapper().writeValueAsString(map), DorisSinkConfig.class);
     }
-
 }
