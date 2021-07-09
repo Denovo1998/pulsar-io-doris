@@ -90,26 +90,29 @@ public class DorisGenericJsonRecordSink extends DorisAbstractSink<GenericJsonRec
         }
 
         String jobStatus = dorisLoadResultMap.get("Status").toString();
+        String numberTotalRows = dorisLoadResultMap.get("NumberTotalRows").toString();
+        String numberLoadedRows = dorisLoadResultMap.get("NumberLoadedRows").toString();
         if (("Success".equals(jobStatus) || "Publish Timeout".equals(jobStatus))
-                && "OK".equals(dorisLoadResultMap.get("Message"))) {
+                && "OK".equals(dorisLoadResultMap.get("Message"))
+                && numberTotalRows.equals(numberLoadedRows)) {
             swapRecordList.stream().forEach(Record::ack);
             log.info("Job is success!");
         } else if ("Label Already Exists".equals(jobStatus)) {
             if (jobLabelRepeatRetryCount < job_label_repeat_retries) {
-                String existingJobStatus = dorisLoadResultMap.get("ExistingJobStatus").toString();
-                log.error("Doris label already exists! The existing job jobStatus is ： " + existingJobStatus);
+                log.error("Doris label already exists! The existing job jobStatus is ： " +
+                        dorisLoadResultMap.get("ExistingJobStatus").toString());
                 sendData(swapRecordList, failJobRetryCount, jobLabelRepeatRetryCount + 1);
             } else {
+                log.error("Maximum number of retries exceeded(Job label repeat).");
                 swapRecordList.stream().forEach(Record::fail);
-                log.error("Maximum number of retries exceeded(Job label repeat), message: " + content);
             }
-        } else if ("Fail".equals(jobStatus)) {
+        } else if ("Fail".equals(jobStatus) || !numberTotalRows.equals(numberLoadedRows)) {
             if (failJobRetryCount < job_failure_retries) {
                 log.error("Job is fail,please retry! Error message: " + dorisLoadResultMap.get("Message").toString());
                 sendData(swapRecordList, failJobRetryCount + 1, jobLabelRepeatRetryCount);
             } else {
+                log.error("Maximum number of retries exceeded(Job fail).");
                 swapRecordList.stream().forEach(Record::fail);
-                log.error("Maximum number of retries exceeded(Job fail), message: " + content);
                 throw new Exception(String.format("Maximum number of retries exceeded(Job fail)!"));
             }
         } else {

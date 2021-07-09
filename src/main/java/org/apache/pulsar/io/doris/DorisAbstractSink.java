@@ -32,6 +32,7 @@ import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.core.Sink;
 import org.apache.pulsar.io.core.SinkContext;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.Executors;
@@ -117,7 +118,7 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
         swapRecordList = Lists.newArrayList();
 
         flushExecutor = Executors.newScheduledThreadPool(1);
-        flushExecutor.scheduleAtFixedRate(this::flush, timeout, timeout, TimeUnit.MILLISECONDS);
+        flushExecutor.scheduleAtFixedRate(() -> flush(), timeout, timeout, TimeUnit.MILLISECONDS);
     }
 
     private static String basicAuthHeader(String username, String password) {
@@ -130,17 +131,52 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
     public void write(Record<T> record) {
         int inComingRecordListSize;
         synchronized (this) {
-            inComingRecordList.add(record);
+            if (record != null) {
+                inComingRecordList.add(record);
+            }
             inComingRecordListSize = inComingRecordList.size();
         }
         if (inComingRecordListSize == batchSize) {
-            flushExecutor.schedule(this::flush, 0, TimeUnit.MILLISECONDS);
+            // flushExecutor.schedule(() -> flush(), 0, TimeUnit.MILLISECONDS);
+            flushExecutor.submit(() -> flush());
         }
     }
 
     private void flush() {
-        // if not in flushing state, do flush, else return;
-        if (inComingRecordList.size() > 0 && isFlushing.compareAndSet(false, true)) {
+        // If not in flushing state, Exchange the data in inComingRecordList and swapRecordList, else return;
+        synchronized (this) {
+            if (inComingRecordList.size() > 0 && isFlushing.compareAndSet(false, true)) {
+                List<Record<T>> tmpList;
+                swapRecordList.clear();
+                tmpList = swapRecordList;
+                swapRecordList = inComingRecordList;
+                inComingRecordList = tmpList;
+            } else {
+                if (log.isDebugEnabled()) {
+                    log.debug("Already in flushing state, will not flush, queue size: {}", inComingRecordList.size());
+                }
+                return;
+            }
+        }
+        if (log.isDebugEnabled()) {
+            log.debug("Starting flush, queue size: {}", swapRecordList.size());
+        }
+
+        int failJobRetryCount = 0;
+        int jobLabelRepeatRetryCount = 0;
+        try {
+            sendData(swapRecordList, failJobRetryCount, jobLabelRepeatRetryCount);
+        } catch (Exception e) {
+            swapRecordList.stream().forEach(Record::fail);
+            log.error("Doris put data exception ", e);
+        }
+
+        if (log.isDebugEnabled()) {
+            log.debug("Finish flush, queue size: {}", swapRecordList.size());
+        }
+        swapRecordList.clear();
+        isFlushing.compareAndSet(true, false);
+        /*if (inComingRecordList.size() > 0 && isFlushing.compareAndSet(false, true)) {
             if (log.isDebugEnabled()) {
                 log.debug("Starting flush, queue size: {}", inComingRecordList.size());
             }
@@ -151,7 +187,6 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
             synchronized (this) {
                 List<Record<T>> tmpList;
                 swapRecordList.clear();
-
                 tmpList = swapRecordList;
                 swapRecordList = inComingRecordList;
                 inComingRecordList = tmpList;
@@ -176,15 +211,19 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
             if (log.isDebugEnabled()) {
                 log.debug("Already in flushing state, will not flush, queue size: {}", inComingRecordList.size());
             }
-        }
-
+        }*/
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() {
         if (client != null) {
-            client.close();
+            try {
+                client.close();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         }
+        flushExecutor.shutdown();
     }
 
     public abstract void sendData(List<Record<T>> swapRecordList,
