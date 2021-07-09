@@ -55,7 +55,7 @@ public class DorisGenericJsonRecordSink extends DorisAbstractSink<GenericJsonRec
             arrayNode.add(jsonNode);
         }
         String content = mapper.writeValueAsString(arrayNode);
-        log.info("%%%插入数据：" + content);
+        // log.info("%%%插入数据：" + content);
 
         StringEntity entity = new StringEntity(content, "UTF-8");
         entity.setContentEncoding("UTF-8");

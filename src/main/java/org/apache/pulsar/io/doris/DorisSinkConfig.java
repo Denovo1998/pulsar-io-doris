@@ -97,7 +97,7 @@ public class DorisSinkConfig implements Serializable {
         defaultValue = "200",
         help = "The batch size of updates made to the Doris"
     )
-    private int batchSize = 100;
+    private int batchSize = 200;
 
     public static DorisSinkConfig load(String yamlFile) throws IOException {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
