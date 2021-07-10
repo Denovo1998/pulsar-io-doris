@@ -72,7 +72,7 @@ public class DorisGenericJsonRecordSink extends DorisAbstractSink<GenericJsonRec
 
         log.info("@@@@@@@当前请求返回json：" + loadResult);
 
-        Map dorisLoadResultMap = parseDorisLoadResultJsonToMap(loadResult);
+        Map<String, String> dorisLoadResultMap = parseDorisLoadResultJsonToMap(loadResult);
         processLoadJobResult(content, swapRecordList, response, dorisLoadResultMap, failJobRetryCount, jobLabelRepeatRetryCount);
     }
 

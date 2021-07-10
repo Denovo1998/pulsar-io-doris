@@ -167,7 +167,6 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
         try {
             sendData(swapRecordList, failJobRetryCount, jobLabelRepeatRetryCount);
         } catch (Exception e) {
-            swapRecordList.stream().forEach(Record::fail);
             log.error("Doris put data exception ", e);
         }
 
@@ -176,42 +175,6 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
         }
         swapRecordList.clear();
         isFlushing.compareAndSet(true, false);
-        /*if (inComingRecordList.size() > 0 && isFlushing.compareAndSet(false, true)) {
-            if (log.isDebugEnabled()) {
-                log.debug("Starting flush, queue size: {}", inComingRecordList.size());
-            }
-            if (!swapRecordList.isEmpty()) {
-                throw new IllegalStateException("swapRecordList should be empty since last flush. " +
-                        "swapRecordList.size: " + swapRecordList.size());
-            }
-            synchronized (this) {
-                List<Record<T>> tmpList;
-                swapRecordList.clear();
-                tmpList = swapRecordList;
-                swapRecordList = inComingRecordList;
-                inComingRecordList = tmpList;
-            }
-
-            // process each record value
-            try {
-                int failJobRetryCount = 0;
-                int jobLabelRepeatRetryCount = 0;
-                sendData(swapRecordList, failJobRetryCount, jobLabelRepeatRetryCount);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-
-            // finish flush
-            if (log.isDebugEnabled()) {
-                log.debug("Finish flush, queue size: {}", swapRecordList.size());
-            }
-            swapRecordList.clear();
-            isFlushing.set(false);
-        } else {
-            if (log.isDebugEnabled()) {
-                log.debug("Already in flushing state, will not flush, queue size: {}", inComingRecordList.size());
-            }
-        }*/
     }
 
     @Override
