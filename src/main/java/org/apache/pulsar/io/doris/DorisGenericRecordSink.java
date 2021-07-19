@@ -27,35 +27,38 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
-import org.apache.pulsar.client.impl.schema.generic.GenericJsonRecord;
+import org.apache.pulsar.client.api.schema.GenericRecord;
 import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.core.annotations.Connector;
 import org.apache.pulsar.io.core.annotations.IOType;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.Calendar;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 
 @Connector(
-        name = "doris",
-        type = IOType.SINK,
-        help = "A sink connector that sends pulsar messages to doris",
-        configClass = DorisSinkConfig.class
+    name = "doris",
+    type = IOType.SINK,
+    help = "A sink connector that sends pulsar messages to doris",
+    configClass = DorisSinkConfig.class
 )
 @Slf4j
-public class DorisGenericJsonRecordSink extends DorisAbstractSink<GenericJsonRecord> {
+public class DorisGenericRecordSink extends DorisAbstractSink<GenericRecord> {
 
-    public void sendData(List<Record<GenericJsonRecord>> swapRecordList,
+    public void sendData(List<Record<GenericRecord>> swapRecordList,
                          int failJobRetryCount,
                          int jobLabelRepeatRetryCount) throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         ArrayNode arrayNode = mapper.createArrayNode();
-        for (Record<GenericJsonRecord> record : swapRecordList) {
-            GenericJsonRecord message = record.getValue();
-            JsonNode jsonNode = message.getJsonNode();
+        for (Record<GenericRecord> record : swapRecordList) {
+            GenericRecord message = record.getValue();
+            String nativeString = message.getNativeObject().toString();
+            JsonNode jsonNode = mapper.readTree(nativeString);
             arrayNode.add(jsonNode);
         }
         String content = mapper.writeValueAsString(arrayNode);
-        // log.info("%%%插入数据：" + content);
 
         StringEntity entity = new StringEntity(content, "UTF-8");
         entity.setContentEncoding("UTF-8");
@@ -70,7 +73,7 @@ public class DorisGenericJsonRecordSink extends DorisAbstractSink<GenericJsonRec
             loadResult = EntityUtils.toString(response.getEntity());
         }
 
-        log.info("@@@@@@@当前请求返回json：" + loadResult);
+        log.info("The json returned by the current request：" + loadResult);
 
         Map<String, String> dorisLoadResultMap = parseDorisLoadResultJsonToMap(loadResult);
         processLoadJobResult(content, swapRecordList, response, dorisLoadResultMap, failJobRetryCount, jobLabelRepeatRetryCount);
@@ -78,7 +81,7 @@ public class DorisGenericJsonRecordSink extends DorisAbstractSink<GenericJsonRec
 
     @Override
     public void processLoadJobResult(String content,
-                                     List<Record<GenericJsonRecord>> swapRecordList,
+                                     List<Record<GenericRecord>> swapRecordList,
                                      CloseableHttpResponse response,
                                      Map dorisLoadResultMap,
                                      int failJobRetryCount,

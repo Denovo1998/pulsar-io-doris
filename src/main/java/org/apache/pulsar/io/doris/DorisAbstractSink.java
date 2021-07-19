@@ -23,18 +23,24 @@ import com.google.common.collect.Lists;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.http.HttpHeaders;
+import org.apache.http.HttpResponse;
 import org.apache.http.client.ServiceUnavailableRetryStrategy;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPut;
-import org.apache.http.impl.client.*;
-import org.apache.pulsar.client.impl.schema.generic.GenericJsonRecord;
+import org.apache.http.impl.client.CloseableHttpClient;
+import org.apache.http.impl.client.DefaultRedirectStrategy;
+import org.apache.http.impl.client.HttpClientBuilder;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.protocol.HttpContext;
 import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.core.Sink;
 import org.apache.pulsar.io.core.SinkContext;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -91,7 +97,7 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
         ServiceUnavailableRetryStrategy serviceUnavailableRetryStrategy = new MyServiceUnavailableRetryStrategy
                 .Builder()
                 .executionCount(3)
-                .retryInterval(200)
+                .retryInterval(100)
                 .build();
         httpClientBuilder = HttpClients
                 .custom()
@@ -137,7 +143,6 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
             inComingRecordListSize = inComingRecordList.size();
         }
         if (inComingRecordListSize == batchSize) {
-            // flushExecutor.schedule(() -> flush(), 0, TimeUnit.MILLISECONDS);
             flushExecutor.submit(() -> flush());
         }
     }
@@ -194,10 +199,60 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
                                   int jobLabelRepeatRetryCount) throws Exception;
 
     public abstract void processLoadJobResult(String content,
-                                              List<Record<GenericJsonRecord>> swapRecordList,
+                                              List<Record<T>> swapRecordList,
                                               CloseableHttpResponse response,
                                               Map dorisLoadResultMap,
                                               int failJobRetryCount,
                                               int jobLabelRepeatRetryCount) throws Exception;
 
+}
+
+class MyServiceUnavailableRetryStrategy implements ServiceUnavailableRetryStrategy {
+
+    private int executionCount;
+    private long retryInterval;
+
+    MyServiceUnavailableRetryStrategy(Builder builder) {
+        this.executionCount = builder.executionCount;
+        this.retryInterval = builder.retryInterval;
+    }
+
+    @Override
+    public boolean retryRequest(HttpResponse response,
+                                int executionCount,
+                                HttpContext context) {
+        if (response.getStatusLine().getStatusCode() != 200 && executionCount < this.executionCount)
+            return true;
+        else
+            return false;
+    }
+
+    @Override
+    public long getRetryInterval() {
+        return this.retryInterval;
+    }
+
+    public static final class Builder {
+        private int executionCount;
+        private long retryInterval;
+
+        public Builder() {
+            executionCount = 3;
+            retryInterval = 1000;
+        }
+
+        public Builder executionCount(int executionCount) {
+            this.executionCount = executionCount;
+            return this;
+        }
+
+        public Builder retryInterval(long retryInterval) {
+            this.retryInterval = retryInterval;
+            return this;
+        }
+
+        public MyServiceUnavailableRetryStrategy build() {
+            return new MyServiceUnavailableRetryStrategy(this);
+        }
+    }
 }

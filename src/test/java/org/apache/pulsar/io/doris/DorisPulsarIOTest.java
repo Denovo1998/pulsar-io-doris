@@ -19,33 +19,26 @@
 
 package org.apache.pulsar.io.doris;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pulsar.client.api.*;
 import org.apache.pulsar.client.api.schema.*;
 import org.apache.pulsar.client.impl.MessageImpl;
-import org.apache.pulsar.client.impl.schema.JSONSchema;
-import org.apache.pulsar.client.impl.schema.generic.GenericJsonRecord;
-import org.apache.pulsar.client.impl.schema.generic.GenericJsonSchema;
+import org.apache.pulsar.client.impl.schema.AvroSchema;
+import org.apache.pulsar.client.impl.schema.generic.GenericAvroSchema;
 import org.apache.pulsar.common.schema.SchemaInfo;
 import org.apache.pulsar.common.schema.SchemaType;
-import org.apache.pulsar.common.util.ObjectMapperFactory;
 import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.functions.source.PulsarRecord;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import java.io.IOException;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
+import java.util.concurrent.TimeoutException;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -57,13 +50,23 @@ import static org.mockito.Mockito.when;
 public class DorisPulsarIOTest {
 
     private Map<String, Object> config;
-    private DorisGenericJsonRecordSink dorisGenericJsonRecordSink;
+    private static final String TOPIC = "doris-sink";
+    private DorisGenericRecordSink dorisGenericRecordSink;
 
     @Data
     public static class StreamTest {
         private long id;
         private long id2;
         private String username;
+
+        @Override
+        public String toString() {
+            return "StreamTest{" +
+                    "id=" + id +
+                    ", id2=" + id2 +
+                    ", username='" + username + '\'' +
+                    '}';
+        }
     }
 
     @BeforeMethod
@@ -79,50 +82,45 @@ public class DorisPulsarIOTest {
         config.put("job_label_repeat_retries", "3");
         config.put("timeout", 1000);
         config.put("batchSize", 100);
-        DorisSinkConfig dorisSinkConfig = DorisSinkConfig.load(config);
 
-        dorisGenericJsonRecordSink = new DorisGenericJsonRecordSink();
-        dorisGenericJsonRecordSink.open(config, null);
+        dorisGenericRecordSink = new DorisGenericRecordSink();
+        dorisGenericRecordSink.open(config, null);
     }
 
     @Test
-    public void testSendData() throws Exception {
-        /*Message<GenericJsonRecord> insertMessage = mock(MessageImpl.class);
-
-        JSONSchema<StreamTest> jsonSchema =
-                JSONSchema.of(SchemaDefinition.<StreamTest>builder().withPojo(StreamTest.class).build());
-        GenericSchema genericJsonSchema = GenericJsonSchema.of(jsonSchema.getSchemaInfo());
+    public void testSendData() throws ExecutionException, InterruptedException, TimeoutException {
+        Message<GenericRecord> insertMessage = mock(MessageImpl.class);
+        GenericSchema<GenericRecord> genericAvroSchema;
 
         StreamTest streamTest = new StreamTest();
         streamTest.setId(1L);
         streamTest.setId2(2L);
         streamTest.setUsername("username-1");
+        AvroSchema<StreamTest> schema = AvroSchema.of(SchemaDefinition.<StreamTest>builder()
+                .withPojo(StreamTest.class).build());
 
-        JsonNode jsonNode = ObjectMapperFactory.getThreadLocal().valueToTree(streamTest);
-        // GenericJsonRecord非public，解决方法是把代码粘贴到pulsar的源代码中，添加module。
-        GenericJsonRecord genericJsonRecord =
-                new GenericJsonRecord(null, null, jsonNode, genericJsonSchema.getSchemaInfo());
-
+        byte[] insertBytes = schema.encode(streamTest);
         CompletableFuture<Void> future = new CompletableFuture<>();
-        Record<GenericJsonRecord> insertRecord = PulsarRecord.<GenericJsonRecord>builder()
+        Record<GenericRecord> insertRecord = PulsarRecord.<GenericRecord>builder()
                 .message(insertMessage)
-                .topicName("doris-sink")
+                .topicName(TOPIC)
                 .ackFunction(() -> future.complete(null))
                 .build();
 
-        when(insertMessage.getValue()).thenReturn(genericJsonRecord);
-
-        log.info("Message.getValue: {}, record.getValue: {}", insertMessage.getValue().toString(),
+        genericAvroSchema = new GenericAvroSchema(schema.getSchemaInfo());
+        when(insertMessage.getValue()).thenReturn(genericAvroSchema.decode(insertBytes));
+        log.info("foo:{}, Message.getValue: {}, record.getValue: {}",
+                streamTest.toString(),
+                insertMessage.getValue().toString(),
                 insertRecord.getValue().toString());
-        dorisGenericJsonRecordSink.write(insertRecord);
+
+        dorisGenericRecordSink.write(insertRecord);
         log.info("executed write");
-        future.get(2, TimeUnit.SECONDS);*/
+        future.get(2, TimeUnit.SECONDS);
     }
 
-    private static final String TOPIC = "doris-sink";
-
     @Test
-    public void testProduceMessage() {
+    public void producerMessage() {
         final String pulsarServiceUrl = "pulsar://localhost:6650";
         try (PulsarClient client = PulsarClient.builder()
                 .serviceUrl(pulsarServiceUrl)
@@ -165,11 +163,11 @@ public class DorisPulsarIOTest {
                 }
                 // flush out all outstanding messages
                 producer.flush();
-                System.out.printf("Successfully produced %d messages to a topic called %s%n",
+                log.info("Successfully produced %d messages to a topic called %s%n",
                         numMessages, TOPIC);
             }
         } catch (PulsarClientException | InterruptedException e) {
-            System.err.println("Failed to produce generic avro messages to pulsar:");
+            log.error("Failed to produce generic avro messages to pulsar:");
             e.printStackTrace();
             Runtime.getRuntime().exit(-1);
         }
