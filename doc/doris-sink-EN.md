@@ -16,6 +16,8 @@ Execute following command in dir `extension/pulsar-io-doris/` ：
 sh build.sh
 ```
 
+**Direct compilation may report errors, you can first comment out the producerMessage and testSendData methods in src/test/java/org/apache/pulsar/io/doris/DorisPulsarIOTest.java**
+
 After successful compilation, the file `pulsar-io-doris-2.8.0.nar`  will be generated in the `output/` directory. Create a folder `connector` under the installation directory in the `Pulsar cluster`, then copy this file to it, and then start the sink operation through the nar package location.
 
 ## Configure
