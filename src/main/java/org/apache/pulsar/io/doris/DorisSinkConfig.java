@@ -99,6 +99,26 @@ public class DorisSinkConfig implements Serializable {
     )
     private int batchSize = 200;
 
+    @FieldDoc(
+        defaultValue = "false",
+        help = "Write the message back to the message queue after repeated failures"
+    )
+    private String dead_message_write_back_enable = "false";
+
+    @FieldDoc(
+        defaultValue = "false",
+        help = "The Pulsar binary service url or Pulsar http service url that the failed message entered"
+    )
+    private String dead_message_sink_serviceUrl = "pulsar://localhost:6650";
+
+    @FieldDoc(
+            defaultValue = "false",
+            help = "The pulsar topic that the failed message enters"
+    )
+    private String dead_message_sink_topic;
+
+
+
     public static DorisSinkConfig load(String yamlFile) throws IOException {
         ObjectMapper mapper = new ObjectMapper(new YAMLFactory());
         return mapper.readValue(new File(yamlFile), DorisSinkConfig.class);

@@ -27,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
+import org.apache.pulsar.client.api.*;
 import org.apache.pulsar.client.api.schema.GenericRecord;
 import org.apache.pulsar.functions.api.Record;
 import org.apache.pulsar.io.core.annotations.Connector;
@@ -39,10 +40,10 @@ import java.util.Map;
 import java.util.UUID;
 
 @Connector(
-    name = "doris",
-    type = IOType.SINK,
-    help = "A sink connector that sends pulsar messages to doris",
-    configClass = DorisSinkConfig.class
+        name = "doris",
+        type = IOType.SINK,
+        help = "A sink connector that sends pulsar messages to doris",
+        configClass = DorisSinkConfig.class
 )
 @Slf4j
 public class DorisGenericRecordSink extends DorisAbstractSink<GenericRecord> {
@@ -76,7 +77,8 @@ public class DorisGenericRecordSink extends DorisAbstractSink<GenericRecord> {
             log.info("The json returned by the current request：" + loadResult);
 
             Map<String, String> dorisLoadResultMap = parseDorisLoadResultJsonToMap(loadResult);
-            processLoadJobResult(content, swapRecordList, response, dorisLoadResultMap, failJobRetryCount, jobLabelRepeatRetryCount);
+            processLoadJobResult(content, swapRecordList, response, dorisLoadResultMap,
+                    failJobRetryCount, jobLabelRepeatRetryCount);
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -111,6 +113,9 @@ public class DorisGenericRecordSink extends DorisAbstractSink<GenericRecord> {
             } else {
                 log.error("Maximum number of retries exceeded(Job label repeat).");
                 swapRecordList.stream().forEach(Record::fail);
+                if (dead_message_write_back_enable) {
+                    deadMessageWriteBack(swapRecordList, dorisLoadResultMap);
+                }
             }
         } else if ("Fail".equals(jobStatus) || !numberTotalRows.equals(numberLoadedRows)) {
             if (failJobRetryCount < job_failure_retries) {
@@ -119,11 +124,40 @@ public class DorisGenericRecordSink extends DorisAbstractSink<GenericRecord> {
             } else {
                 log.error("Maximum number of retries exceeded(Job fail).");
                 swapRecordList.stream().forEach(Record::fail);
-                throw new Exception(String.format("Maximum number of retries exceeded(Job fail)!"));
+                if (dead_message_write_back_enable) {
+                    deadMessageWriteBack(swapRecordList, dorisLoadResultMap);
+                }
+                throw new Exception("Maximum number of retries exceeded(Job fail)!");
             }
         } else {
             swapRecordList.stream().forEach(Record::fail);
+            if (dead_message_write_back_enable) {
+                deadMessageWriteBack(swapRecordList, dorisLoadResultMap);
+            }
             log.error("Unknown error!");
+        }
+    }
+
+    private void deadMessageWriteBack(List<Record<GenericRecord>> swapRecordList, Map dorisLoadResultMap) {
+        try (PulsarClient client = PulsarClient.builder()
+                .serviceUrl(dead_message_sink_serviceUrl)
+                .build()) {
+            try (Producer<GenericRecord> producer = client.newProducer(Schema.AUTO_CONSUME())
+                    .enableBatching(false)
+                    .topic(dead_message_sink_topic)
+                    .create()) {
+                // publish messages
+                for (Record<GenericRecord> genericRecordRecord : swapRecordList) {
+                    GenericRecord value = genericRecordRecord.getValue();
+                    producer.newMessage()
+                            .key(String.valueOf(dorisLoadResultMap.get("Label")))
+                            .value(value)
+                            .sendAsync();
+                }
+                producer.flush();
+            }
+        } catch (PulsarClientException e) {
+            e.printStackTrace();
         }
     }
 

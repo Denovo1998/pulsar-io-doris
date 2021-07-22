@@ -61,6 +61,9 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
     // for job failover
     protected int job_failure_retries = 2;
     protected int job_label_repeat_retries = 3;
+    protected boolean dead_message_write_back_enable = false;
+    protected String dead_message_sink_serviceUrl;
+    protected String dead_message_sink_topic;
 
     // for flush
     private List<Record<T>> inComingRecordList;
@@ -81,12 +84,19 @@ public abstract class DorisAbstractSink<T> implements Sink<T> {
         String doris_http_port = dorisSinkConfig.getDoris_http_port();
         job_failure_retries = Integer.parseInt(dorisSinkConfig.getJob_failure_retries());
         job_label_repeat_retries = Integer.parseInt(dorisSinkConfig.getJob_label_repeat_retries());
+        dead_message_write_back_enable = Boolean.parseBoolean(dorisSinkConfig.getDead_message_write_back_enable());
+        dead_message_sink_serviceUrl = dorisSinkConfig.getDead_message_sink_serviceUrl();
+        dead_message_sink_topic = dorisSinkConfig.getDead_message_sink_topic();
         Objects.requireNonNull(doris_host, "Doris Host is not set");
         Objects.requireNonNull(doris_db, "Doris Database is not set");
         Objects.requireNonNull(doris_table, "Doris Table is not set");
         Objects.requireNonNull(doris_user, "Doris User is not set");
         Objects.requireNonNull(doris_password, "Doris Password is not set");
         Objects.requireNonNull(doris_http_port, "Doris HTTP Port is not set");
+        if (dead_message_write_back_enable) {
+            Objects.requireNonNull(dead_message_sink_serviceUrl, "Dead Message Sink Pulsar ServiceUrl is not set");
+            Objects.requireNonNull(dead_message_sink_topic, "Dead Message Sink Pulsar Topic is not set");
+        }
 
         loadUrl = String.format("http://%s:%s/api/%s/%s/_stream_load",
                 doris_host,
